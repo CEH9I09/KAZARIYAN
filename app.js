@@ -479,8 +479,8 @@ function downloadFile(file,filename) {
   setTimeout(() => URL.revokeObjectURL(url),1500);
 }
 function exportDialog() {
-  showDialog('Экспорт базы','Скачайте все отклики из рабочей базы.',
-    '<p class="dialog-copy">В таблице будут контакты, статусы, комментарии, напоминания и история действий. Для переноса всей CRM используйте резервную копию.</p>',
+  showDialog('Экспорт откликов','Карточки, закреплённые за вами.',
+    '<p class="dialog-copy">В таблице будут контакты, статусы, комментарии, напоминания и история действий.</p>',
     '<button class="button" id="export-csv">Скачать CSV</button><button class="button primary" id="export-xlsx">Скачать XLSX</button>');
   function download(format) {
     const rows = exportRows(state.contacts);
@@ -492,9 +492,12 @@ function exportDialog() {
 }
 
 const icons = {
-  logo:'<circle cx="12" cy="12" r="9"/><path d="m8 4 1 3-3 2 1 3 4 1 1 5 3 1 2-4-1-3 4-2M5 17l3-1"/>',
+  logo:'<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
   archive:'<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8m-10 5h6"/>',
   repeat:'<path d="M5 8h14l-3-3m3 3-3 3m3 5H5l3-3m-3 3 3 3"/>',
+  send:'<path d="m22 2-7 20-4-9-9-4 20-7ZM11 13l11-11"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  logout:'<path d="M10 17l5-5-5-5m5 5H3m9-8h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7"/>',
   note:'<path d="M4 4h16v12l-4 4H4V4Zm12 16v-4h4M8 9h8m-8 4h5"/>',
   left:'<path d="m14 6-6 6 6 6"/>',
   right:'<path d="m10 6 6 6-6 6"/>',
@@ -527,7 +530,7 @@ const formatCount = number => formatter.format(number);
 const dialog = $('#dialog');
 const relativeDate = new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'short'});
 const exactDate = new Intl.DateTimeFormat('ru-RU',{dateStyle:'medium',timeStyle:'short'});
-const titles = {board:'Воронка',list:'Все отклики',archive:'Отказ',history:'История импорта'};
+const titles = {board:'Воронка',list:'Мои лиды',archive:'Отказ',history:'История импорта'};
 const state = {
   account:null,members:[],selected:new Set(),revision:-1,contacts:[],imports:[],view:'board',drag:null,limits:{},
   query:'',vacancy:'',from:'',to:'',status:'',onlyDue:false,importSource:null,importJob:0,committing:false
@@ -542,6 +545,8 @@ let refreshTimer;
 let live = false;
 let channelReady = false;
 let redrawAfterDrag = false;
+let ownChanges = 0;
+const arrivals = new Set();
 function toast(message) {
   clearTimeout(toastTimer);
   $('#toast').textContent = message;
@@ -569,16 +574,51 @@ function connectionStatus(message,connected=false) {
 function decodeLead(row) {
   return hydrateContact({...row.data,id:row.id,assignee:row.assignee});
 }
+function dissolveCards(ids) {
+  if(!ids.size || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const board = $('.board');
+  if(!board) return;
+  const viewport = board.getBoundingClientRect();
+  for(const card of board.querySelectorAll('[data-card]')) {
+    if(!ids.has(card.dataset.card)) continue;
+    const bounds = card.getBoundingClientRect();
+    if(bounds.right <= viewport.left || bounds.left >= viewport.right ||
+       bounds.bottom <= 0 || bounds.top >= window.innerHeight) continue;
+    const ghost = document.createElement('div');
+    ghost.className = 'card-dissolve';
+    ghost.ariaHidden = 'true';
+    Object.assign(ghost.style,{top:bounds.top+'px',left:bounds.left+'px',width:bounds.width+'px',height:bounds.height+'px'});
+    document.body.append(ghost);
+    ghost.addEventListener('animationend',()=>ghost.remove(),{once:true});
+    setTimeout(()=>ghost.remove(),300);
+  }
+}
+function replaceContacts(contacts,animate=true) {
+  const previous = new Set(state.contacts.map(contact=>contact.id));
+  const ids = new Set(contacts.map(contact=>contact.id));
+  const removed = new Set([...previous].filter(id=>!ids.has(id)));
+  if(animate) {
+    dissolveCards(removed);
+    for(const id of ids) if(!previous.has(id)) arrivals.add(id);
+  }
+  for(const id of removed) {
+    state.selected.delete(id);
+    arrivals.delete(id);
+  }
+  state.contacts = contacts;
+  if(removed.has(state.drag)) state.drag = null;
+  if(state.drag) redrawAfterDrag = true;
+  else { redrawAfterDrag = false; render(); }
+  syncOpenContact();
+}
 function applyWorkspace(data) {
+  const animate = state.revision !== -1;
   state.revision = data.revision;
-  state.contacts = data.contacts.map(decodeLead).sort((a,b)=>b.updatedAt-a.updatedAt);
   state.imports = data.imports.sort((a,b)=>b.at-a.at);
   state.members = data.members;
-  const ids = new Set(state.contacts.map(contact=>contact.id));
-  for(const id of state.selected) if(!ids.has(id)) state.selected.delete(id);
-  if(state.drag) redrawAfterDrag = true;
-  else render();
-  syncOpenContact();
+  const contacts = data.contacts.filter(row=>row.assignee===state.account.id)
+    .map(decodeLead).sort((a,b)=>b.updatedAt-a.updatedAt);
+  replaceContacts(contacts,animate);
 }
 function committed() {
   refreshAgain = true;
@@ -587,11 +627,13 @@ function committed() {
   refreshing = (async () => {
     while(refreshAgain && state.account && current === generation) {
       refreshAgain = false;
+      const before = ownChanges;
       const data = await database.snapshot(state.account,state.revision).catch(error => {
         if(error.code === 'ZEMLYA_ACCESS') return {accessRevoked:true};
         throw error;
       });
       if(current !== generation) return;
+      if(before !== ownChanges) { refreshAgain = true; continue; }
       if(data?.accessRevoked) {
         clearAccount('Доступ к CRM закрыт.');
         await database.signOut();
@@ -696,7 +738,9 @@ async function persistCandidates(batch) {
       const unique = [...new Map(writes.map(lead=>[lead.id,lead])).values()];
       const assignments = Object.fromEntries(unique.filter(lead=>Object.hasOwn(lead,'assignedLogin'))
         .map(lead=>[lead.id,lead.assignedLogin]));
-      await database.importBatch(fresh.revision,unique.map(leadData),[...(batch.logs??[]),entry],assignments);
+      const blocked = await database.importBatch(fresh.revision,unique.map(leadData),[...(batch.logs??[]),entry],assignments);
+      result.added = Math.max(0,result.added-(blocked??0));
+      result.skipped += blocked??0;
       return result;
     } catch(error) {
       if(error.code !== '40001' || attempt === 3) throw error;
@@ -731,7 +775,7 @@ function patchContact(record,change) {
 }
 async function updateRecord(id,change) {
   for(let attempt=0;attempt<4;attempt++) {
-    const row = await database.getLead(id);
+    const row = await database.getLead(id,state.account.id);
     const original = decodeLead(row);
     const updated = patchContact(original,change);
     if(updated.events.length === original.events.length) return original;
@@ -820,7 +864,6 @@ function phoneHTML(contact) {
   if(label.length < 8) return '<span class="phone">' + icon('phone') + safe(contact.phone) + '</span>';
   return '<a class="phone" title="Позвонить" data-phone="' + safe(contact.id) + '" href="tel:' + safe(label) + '">' + icon('phone') + safe(contact.phone) + '</a>';
 }
-const importButton = '<button class="button primary" data-import>' + icon('upload') + ' Загрузить отклики</button>';
 function candidateName(contact) {
   const {primary,surname} = candidateNameParts(contact);
   const label = safe([primary,surname].filter(Boolean).join(' '));
@@ -847,19 +890,19 @@ function archiveAction(contact) {
 function quickActions(contact) {
   return '<div class="quick-actions" aria-label="Результат звонка">' +
     [['missed','НДЗ'],['missed2','НДЗ 2'],['talking','Переговоры']].map(([status,label]) =>
-      '<button class="quick ' + stageById[status].color + '" data-quick="' + status + '" data-for="' + safe(contact.id) + '">' + label + '</button>').join('') + archiveAction(contact) +
+      '<button type="button" class="quick ' + stageById[status].color + '" data-quick="' + status + '" data-for="' + safe(contact.id) + '">' + label + '</button>').join('') +
     '</div>';
 }
+function transferButton(contact) {
+  return '<button class="card-transfer" type="button" data-team-assign="'+safe(contact.id)+'" aria-label="Передать: '+
+    safe(labelOf(contact))+'" title="Передать лид">'+icon('send')+'<span>Передать</span></button>';
+}
 function card(contact,stage) {
-  const initials = initialsOf(contact);
-  const years = candidateAge(contact);
-  return '<article draggable="true" class="candidate' + (isOverdue(contact) ? ' overdue' : '') + '" data-card="' + safe(contact.id) +
-    '"><div class="card-top"><span class="avatar ' + stage.color + '">' + safe(initials) + '</span>' + candidateName(contact) +
-    '<button class="card-note-trigger" data-note="' + safe(contact.id) + '" aria-label="Добавить заметку" title="Добавить заметку">' + icon('note') + '</button>' +
-    '</div><p class="card-job" title="' + safe(jobOf(contact)) + '">' + safe(jobOf(contact)) + '</p>' + repeatBadge(contact) + (years === null ? '' : '<span class="candidate-years" title="Возраст кандидата">' + years + ' лет</span>') +
-    (contact.note ? '<p class="card-note" title="' + safe(contact.note) + '">' + safe(contact.note) + '</p>' : '') +
-    callbackHTML(contact) + (contact.attempts ? '<p class="attempts">Попыток дозвона: ' + contact.attempts + '</p>' : '') +
-    '<div class="card-bottom">' + phoneHTML(contact) + leadAgeHTML(contact) + '</div>' + quickActions(contact) + pickLead(contact) + '</article>';
+  return '<article draggable="true" class="candidate' + (isOverdue(contact) ? ' overdue' : '') +
+    (arrivals.delete(contact.id) ? ' entering' : '') + '" data-card="' + safe(contact.id) +
+    '"><div class="card-top">' + candidateName(contact) + pickLead(contact) + '</div>'+
+    '<div class="card-bottom"><span class="tag '+stage.color+'">'+stage.name+'</span>'+
+    transferButton(contact)+'</div></article>';
 }
 function renderStats(contacts) {
   const today = localDay();
@@ -876,7 +919,7 @@ function renderStats(contacts) {
     }
   }
   const tiles = [
-    ['Всего откликов',contacts.length,'inbox','purple'],
+    ['Мои лиды',contacts.length,'inbox','purple'],
     [isOwner() ? 'Новых сегодня' : 'Передано мне сегодня',
       isOwner() ? todaysImports.reduce((sum,item) => sum + item.added,0) : assignedToday.size,'download','blue'],
     ['Обзвонено сегодня',called.size,'phone','green'],
@@ -927,23 +970,22 @@ function renderResults() {
   const visible = filteredContacts(contacts);
   $('#team-select').disabled = !visible.length;
   $('#clear-filters').hidden = !(state.query || state.vacancy || state.status || state.from || state.to || state.onlyDue);
-  const onboarding = isOwner() && !archive && !contacts.length
-    ? '<div class="onboarding"><div><strong>Загрузите первые отклики</strong><p>Скачайте выгрузку из Авито и выберите файл XLSX, CSV или TSV.</p></div>' + importButton + '</div>' : '';
   const listView = state.view !== 'board';
   $('#board-controls').hidden = listView;
   $('.switcher').hidden = archive;
   $('#status-control').hidden = archive;
   $('#due-control').hidden = archive;
   if(listView) {
-    $('#results').innerHTML = onboarding + (visible.length ? '<div class="panel"><table class="table"><thead><tr><th>Кандидат</th><th>Телефон</th><th>Вакансия</th><th>Статус</th><th>Дата отклика</th><th>Возраст лида</th><th>Действия</th></tr></thead><tbody>' +
+    $('#results').innerHTML = visible.length ? '<div class="panel"><table class="table"><thead><tr><th>Кандидат</th><th>Телефон</th><th>Вакансия</th><th>Статус</th><th>Дата отклика</th><th>Возраст лида</th><th>Действия</th></tr></thead><tbody>' +
       visible.slice(0,state.limits.list ?? 50).map(contact => '<tr' + (isOverdue(contact) ? ' class="overdue"' : '') + '><td>' + candidateName(contact) + repeatBadge(contact) + callbackHTML(contact) + '</td><td>' + phoneHTML(contact) + '</td><td>' +
         safe(jobOf(contact)) + '</td><td><span class="tag ' + stageById[contact.status].color + '">' + stageById[contact.status].name +
-        '</span></td><td>' + safe(dateOf(contact)) + '</td><td>' + leadAgeHTML(contact) + '</td><td>' + archiveAction(contact) + pickLead(contact) + '</td></tr>').join('') + '</tbody></table></div>' + showNext('list',visible.length)
-      : '<div class="empty-panel panel">' + (contacts.length ? 'Совпадений нет.' : archive ? 'Здесь появятся кандидаты, перенесённые в отказ.' : 'Список откликов пуст.') + '</div>');
+        '</span></td><td>' + safe(dateOf(contact)) + '</td><td>' + leadAgeHTML(contact) + '</td><td><div class="row-actions">' +
+        archiveAction(contact) + transferButton(contact) + pickLead(contact) + '</div></td></tr>').join('') + '</tbody></table></div>' + showNext('list',visible.length)
+      : '<div class="empty-panel panel">' + (contacts.length ? 'Совпадений нет.' : archive ? 'Здесь появятся кандидаты, перенесённые в отказ.' : 'Список откликов пуст.') + '</div>';
     return;
   }
   const left = $('.board')?.scrollLeft ?? 0;
-  $('#results').innerHTML = onboarding + '<div class="board" tabindex="0" aria-label="Этапы воронки">' + stages.map(stage => {
+  $('#results').innerHTML = '<div class="board" tabindex="0" aria-label="Этапы воронки">' + stages.map(stage => {
     const selected = visible.filter(contact => contact.status === stage.id);
     return '<section class="column ' + stage.color + '" data-stage="' + stage.id + '"><header class="column-heading"><span class="column-dot"></span><h2>' +
       stage.name + '</h2><span class="count">' + formatCount(selected.length) + '</span></header><div class="cards">' +
@@ -969,7 +1011,7 @@ function render() {
   $('#page-title').textContent = state.view === 'board' ? 'Воронка кандидатов' : titles[state.view];
   $('#page-description').textContent = history ? 'Загруженные файлы и результаты обработки.' :
     state.view === 'archive' ? 'Кандидаты, перенесённые в отказ.' : 'Отклики с Авито и этапы работы с кандидатами.';
-  $('#mode').textContent = 'Выйти';
+  $('#pipeline-title').textContent = state.view === 'archive' ? 'Отклонённые лиды' : 'Мои лиды';
   $('#stats').hidden = history || state.view === 'archive';
   $('#pipeline').hidden = history;
   $('#history').hidden = !history;
@@ -1080,7 +1122,8 @@ function detailDialog(id) {
     '>Перезвонить<input type="datetime-local" id="contact-reminder" value="' + dateTimeValue(contact.reminder) + '"></label>' +
     '<p class="attempts" id="contact-attempts"' + (contact.attempts ? '' : ' hidden') + '>Попыток дозвона: ' + contact.attempts + '</p>' +
     '<div class="contact-actions"><button class="button primary" id="save-contact">Сохранить</button><button class="button" type="button" id="log-call">' +
-    icon('phone') + ' Записать звонок</button>' + archiveAction(contact) + '</div></form></aside><section class="contact-panel contact-activity"><h3>Лента кандидата</h3>' +
+    icon('phone') + ' Записать звонок</button>' + archiveAction(contact) + '</div>' + quickActions(contact) +
+    '</form></aside><section class="contact-panel contact-activity"><h3>Лента кандидата</h3>' +
     '<form id="contact-note-form" class="note-composer"><label class="field">Новая заметка<textarea id="contact-note" required maxlength="3000" ' +
     'placeholder="Что важно запомнить по этому кандидату?"></textarea></label><div class="note-actions"><button class="button primary" id="save-note">' +
     icon('note') + ' Добавить заметку</button></div></form><div id="contact-feed" aria-live="polite">' + timelineItems(contact) +
@@ -1288,8 +1331,8 @@ function downloadBackup() {
 }
 function backupDialog() {
   showDialog('Резервная копия','Кандидаты, статусы, заметки и история импорта.',
-    '<p class="dialog-copy">В копии будут карточки, их этапы, заметки и история действий. Копия также сохраняет ответственных по логину. Аккаунты и пароли хранятся в Supabase Auth.</p>' +
-    '<p class="notice">В рабочей базе ' + formatCount(state.contacts.length) + ' откликов.</p>',
+    '<p class="dialog-copy">Копия включает закреплённые за вами карточки, их этапы, ответственных и историю действий.</p>' +
+    '<p class="notice">Ваших откликов: ' + formatCount(state.contacts.length) + '.</p>',
     '<button class="button" id="restore-backup">Восстановить из копии</button><button class="button primary" id="download-backup">' +
       icon('download') + ' Скачать копию</button>');
   $('#download-backup').onclick = downloadBackup;
@@ -1417,8 +1460,8 @@ function bindEvents() {
     item.setAttribute('aria-label',item.textContent.trim());
   }
   document.addEventListener('click',event => {
-    if(event.target.closest('.team-pick')) return;
-    const target = event.target.closest('[data-view],[data-import],[data-contact],[data-close],[data-more],[data-quick],[data-archive],[data-note],[data-phone],[data-card]');
+    if(event.target.closest('.team-pick,[data-team-assign]')) return;
+    const target = event.target.closest('[data-view],[data-import],[data-contact],[data-close],[data-more],[data-quick],[data-archive],[data-phone],[data-card]');
     if(!target) return;
     if(target.hasAttribute('data-view')) {
       event.preventDefault();
@@ -1446,9 +1489,6 @@ function bindEvents() {
         if(dialog.dataset.contactId === id) dialog.close();
         toast(restore ? 'Кандидат возвращён в «Лид».' : 'Кандидат перенесён во вкладку «Отказ».');
       },error => { target.disabled = false; report(error); });
-    } else if(target.hasAttribute('data-note')) {
-      detailDialog(target.dataset.note);
-      $('#contact-note')?.focus();
     } else if(target.hasAttribute('data-phone')) {
       const id = target.dataset.phone;
       updateRecord(id,{kind:'dial'}).then(() => syncContactFeed(id),report);
@@ -1514,24 +1554,22 @@ function bindEvents() {
   for(const [id,direction] of [['scroll-left',-1],['scroll-right',1]]) {
     $('#' + id).onclick = () => {
       const board = $('.board');
-      if(board) board.scrollBy({left:direction * Math.max(220,board.clientWidth*.68),behavior:'smooth'});
+      if(board) board.scrollBy({left:direction * Math.max(220,board.clientWidth*.68),
+        behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
     };
   }
   window.addEventListener('resize',syncBoardControls);
   bindDrag();
 }
 function isOwner() { return state.account?.role === 'owner'; }
-function assigneeName(contact) {
-  const member = state.members.find(member => member.id === contact.assignee);
-  return member?.login || 'Без ответственного';
-}
 function pickLead(contact) {
-  return '<div class="team-pick"><label><input type="checkbox" data-select-lead value="' +
+  return '<label class="team-pick" title="Выбрать лид"><input type="checkbox" data-select-lead value="' +
     safe(contact.id) + '" aria-label="Выбрать: ' + safe(labelOf(contact)) + '"' +
-    (state.selected.has(contact.id) ? ' checked' : '') + '> <span>' + safe(assigneeName(contact)) + '</span></label></div>';
+    (state.selected.has(contact.id) ? ' checked' : '') + '></label>';
 }
 function renderSelection() {
   $('#team-assign').disabled = !state.selected.size;
+  $('#team-assign').hidden = !state.selected.size;
   $('#team-assign').textContent = 'Передать лиды' + (state.selected.size ? ' · '+state.selected.size : '');
   $('#team-clear').hidden = !state.selected.size;
 }
@@ -1593,10 +1631,11 @@ function deleteLead(id) {
 function assignLeads(ids) {
   if(!ids.length) return;
   if(ids.length > 5000) { toast('Выбери до 5 000 карточек за раз.'); return; }
-  const assignable = state.members.filter(member=>member.active && (isOwner() || member.id !== state.account.id));
+  const sender = state.account;
+  const assignable = state.members.filter(member=>member.active && member.id !== sender.id);
+  if(!assignable.length) { toast('Сейчас нет доступных получателей.'); return; }
   const options = '<option value="" disabled selected>Выбери получателя</option>'+
-    assignable.map(member=>'<option value="'+safe(member.id)+'">'+safe(member.login || member.name)+'</option>').join('')+
-    (isOwner() ? '<option value="unassigned">Снять ответственного</option>' : '');
+    assignable.map(member=>'<option value="'+safe(member.id)+'">'+safe(member.login)+'</option>').join('');
   showDialog('Передать лиды','Выбрано '+formatCount(ids.length),
     '<label class="field">Кому передать<select id="team-assignee">'+options+'</select></label>',
     '<button class="button" data-close>Отмена</button><button class="button primary" id="team-assign-submit" disabled>Передать</button>');
@@ -1606,12 +1645,14 @@ function assignLeads(ids) {
     const button = event.currentTarget;
     button.disabled = true;
     try {
-      const assignee = recipient.value === 'unassigned' ? null : recipient.value;
-      const changed = await database.assign(ids,assignee);
-      for(const id of ids) state.selected.delete(id);
-      await refreshAfterWrite();
-      if(dialog.open) dialog.close();
+      const changed = await database.assign(ids,recipient.value);
+      if(state.account?.id !== sender.id) return;
+      ownChanges++;
+      const passed = new Set(ids);
+      replaceContacts(state.contacts.filter(contact=>!passed.has(contact.id)));
+      if(button.isConnected && dialog.open) dialog.close();
       toast('Передано карточек: '+formatCount(changed));
+      await refreshAfterWrite();
     } catch(cause) { button.disabled=false; report(cause); }
   };
 }
@@ -1620,14 +1661,13 @@ function showAccount(message='') {
   $('#team-account').hidden = Boolean(state.account);
   if(state.account) {
     all('[data-owner]').forEach(node=>{ node.hidden = !isOwner(); });
-    titles.list = isOwner() ? 'Все отклики' : 'Мои лиды';
     $('#team-list-label').textContent = titles.list;
     $('#team-who').textContent = state.account.login;
     $('#team-role').textContent = isOwner() ? 'Администратор' : 'Сотрудник';
     return;
   }
   $('#team-account').innerHTML = '<section class="team-auth-panel"><p class="team-auth-brand">Земля · CRM</p>'+
-    '<h1>Вход в «Землю»</h1><form id="team-account-form">'+
+      '<h1>Вход в «Землю»</h1><form id="team-account-form">'+
     '<label class="field">Логин<input name="login" autocomplete="username" placeholder="Фамилия" maxlength="40" required></label>'+
     '<label class="field">Пароль<input type="password" name="password" autocomplete="current-password" maxlength="128" required></label>'+
     '<p id="team-account-error" class="notice error" role="alert"'+(message ? '' : ' hidden')+'>'+safe(message)+'</p>'+
@@ -1657,7 +1697,7 @@ function showAccount(message='') {
       connectionStatus('Подключаем синхронизацию…');
       const current = generation;
       try {
-        const stop = await database.watch(() => scheduleRefresh(),status => {
+        const stop = await database.watch(account,() => scheduleRefresh(),status => {
           if(current !== generation) return;
           channelReady = status === 'SUBSCRIBED';
           if(channelReady) {
@@ -1696,6 +1736,7 @@ function clearAccount(message='') {
   state.imports = [];
   state.members = [];
   state.selected.clear();
+  arrivals.clear();
   state.drag = null;
   state.importSource = null;
   redrawAfterDrag = false;

@@ -30,11 +30,12 @@
       return row.revision;
     }
 
-    async function allRows(table,fields) {
+    async function allRows(table,fields,assignee) {
       const rows = [];
       let cursor = null;
       for(;;) {
         let request = client.from(table).select(fields).order('id',{ascending:true}).limit(250);
+        if(assignee) request = request.eq('assignee',assignee);
         if(cursor !== null) request = request.gt('id',cursor);
         const batch = check(await request);
         if(!batch.length) return rows;
@@ -48,7 +49,7 @@
         const rev = await revision();
         if(rev === currentRevision) return null;
         const [contacts,members,imports] = await Promise.all([
-          allRows('leads',leadFields),
+          allRows('leads',leadFields,account.id),
           allRows('crm_members','id,login,role,active'),
           includeImports && account.role === 'owner' ? allRows('crm_imports','id,data') : []
         ]);
@@ -75,11 +76,14 @@
       }
     }
 
-    async function watch(onChange,onStatus) {
+    async function watch(account,onChange,onStatus) {
       // Uses the signed-in user's current JWT. Supabase JS updates it on Auth refresh.
       await client.realtime.setAuth();
-      const channel = client.channel('zemlya-board')
-        .on('postgres_changes',{event:'*',schema:'public',table:'leads'},onChange)
+      const owned = {schema:'public',table:'leads',filter:'assignee=eq.'+account.id};
+      const channel = client.channel('zemlya-board-'+account.id)
+        .on('postgres_changes',{...owned,event:'INSERT'},onChange)
+        .on('postgres_changes',{...owned,event:'UPDATE'},onChange)
+        // An UPDATE leaving this user's RLS scope cannot notify the previous assignee.
         .on('postgres_changes',{event:'UPDATE',schema:'public',table:'crm_change_clock'},onChange)
         .subscribe(onStatus);
       return () => client.removeChannel(channel);
@@ -91,8 +95,8 @@
         client.auth.onAuthStateChange(event => { if(event === 'SIGNED_OUT') queueMicrotask(callback); });
       },
       async signOut() { check(await client.auth.signOut({scope:'local'})); },
-      async getLead(id) {
-        const row = check(await client.from('leads').select(leadFields).eq('id',id).maybeSingle());
+      async getLead(id,assignee) {
+        const row = check(await client.from('leads').select(leadFields).eq('id',id).eq('assignee',assignee).maybeSingle());
         if(!row) throw new Error('Карточка больше недоступна.');
         return row;
       },
@@ -100,7 +104,7 @@
         check(await client.rpc('zemlya_save_lead',{p_id:id,p_version:version,p_data:data}));
       },
       async importBatch(revision,leads,imports,assignments) {
-        check(await client.rpc('zemlya_import',{
+        return check(await client.rpc('zemlya_import',{
           p_revision:revision,p_leads:leads,p_imports:imports,p_assignments:assignments
         }));
       },
