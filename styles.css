@@ -318,6 +318,7 @@ dialog::backdrop { background: #1e302755; backdrop-filter: blur(2px); }
 .transfer-dialog .dialog-body { padding-block: 13px; }
 .transfer-fields { border: 0; min-width: 0; margin: 0; padding: 0; }
 .transfer-filters { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.transfer-all { margin-bottom: 9px; }
 .transfer-list { max-height: min(43dvh,365px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--edge); background: var(--paper); border-radius: 10px; }
 .transfer-row { display: grid; grid-template-columns: auto minmax(0,1fr) minmax(0,130px); align-items: center; gap: 11px; padding: 10px; min-height: 53px; cursor: pointer; border-bottom: 1px solid var(--edge); }
 .transfer-row:last-child { border-bottom: 0; }

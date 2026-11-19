@@ -1609,10 +1609,14 @@ function deleteLead(id) {
     finally { state.committing = false; submit.disabled = false; }
   };
 }
+const maxTransferBatch = 5000;
 function updateTransferControls() {
-  $('#transfer-count').textContent = 'Выбрано '+formatCount(transfer.ids.size);
-  $('#team-assign-submit').disabled = !transfer.ids.size || transfer.ids.size > 5000 || !$('#team-assignee').value;
-  $('#transfer-limit').hidden = transfer.ids.size <= 5000;
+  const count = transfer.ids.size;
+  const selectAll = $('#transfer-all');
+  selectAll.disabled = !state.contacts.length;
+  selectAll.textContent = count && count === state.contacts.length ? 'Снять выбор со всех' : 'Передать всех лидов';
+  $('#transfer-count').textContent = 'Выбрано '+formatCount(count);
+  $('#team-assign-submit').disabled = !count || !$('#team-assignee').value;
 }
 function syncTransferDialog() {
   if(!transfer || !dialog.open || transfer.sending) return;
@@ -1651,9 +1655,9 @@ function openTransferDialog() {
     '<fieldset class="transfer-fields" id="transfer-fields"><div class="transfer-filters">'+
     '<label class="field">Этап<select id="transfer-stage"><option value="">Все этапы</option>'+stagesHTML+'</select></label>'+
     '<label class="field">Кому передать<select id="team-assignee"></select></label></div>'+
+    '<button class="button transfer-all" id="transfer-all" type="button">Передать всех лидов</button>'+
     '<div id="transfer-list" class="transfer-list" role="group" aria-label="Кандидаты"></div></fieldset>'+
-    '<p class="notice error" id="transfer-error" role="alert" hidden></p>'+
-    '<p class="notice" id="transfer-limit" hidden>За один раз можно передать до 5 000 кандидатов.</p>',
+    '<p class="notice error" id="transfer-error" role="alert" hidden></p>',
     '<span id="transfer-count" class="transfer-count" aria-live="polite"></span>'+
     '<button class="button" type="button" data-close>Отмена</button>'+
     '<button class="button primary" id="team-assign-submit" type="button" disabled>Передать</button>');
@@ -1664,6 +1668,15 @@ function openTransferDialog() {
   const list = $('#transfer-list');
   const fieldset = $('#transfer-fields');
   stage.onchange = () => { list.scrollTop = 0; syncTransferDialog(); };
+  $('#transfer-all').onclick = () => {
+    if(current.ids.size === state.contacts.length) current.ids.clear();
+    else {
+      current.ids = new Set(state.contacts.map(contact=>contact.id));
+      stage.value = '';
+      list.scrollTop = 0;
+    }
+    syncTransferDialog();
+  };
   $('#team-assignee').onchange = updateTransferControls;
   list.onchange = event => {
     const input = event.target;
@@ -1681,18 +1694,25 @@ function openTransferDialog() {
     current.sending = state.committing = fieldset.disabled = button.disabled = true;
     button.textContent = 'Передаём…';
     banner.hidden = true;
+    let changed = 0;
     try {
-      const changed = await database.assign(ids,recipient);
-      if(state.account !== sender) return;
-      ownChanges++;
-      const passed = new Set(ids);
-      replaceContacts(state.contacts.filter(contact=>!passed.has(contact.id)));
+      for(let offset=0;offset<ids.length;offset+=maxTransferBatch) {
+        const batch = ids.slice(offset,offset+maxTransferBatch);
+        changed += await database.assign(batch,recipient);
+        if(state.account !== sender) return;
+        ownChanges++;
+        const passed = new Set(batch);
+        for(const id of passed) current.ids.delete(id);
+        replaceContacts(state.contacts.filter(contact=>!passed.has(contact.id)));
+        $('#transfer-count').textContent = 'Передано '+formatCount(changed)+' из '+formatCount(ids.length);
+      }
       if(button.isConnected && dialog.open) dialog.close();
       toast('Передано карточек: '+formatCount(changed));
       await refreshAfterWrite();
     } catch(cause) {
       if(transfer !== current || !dialog.open) return;
-      banner.textContent = cause?.message || 'Не удалось передать лидов.';
+      const message = cause?.message || 'Не удалось передать лидов.';
+      banner.textContent = changed ? 'Передано '+formatCount(changed)+'. '+message : message;
       banner.hidden = false;
       scheduleRefresh();
     } finally {
