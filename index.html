@@ -8,7 +8,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://xjiyiwzzqghhgzxdqvhy.supabase.co wss://xjiyiwzzqghhgzxdqvhy.supabase.co; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>Земля — CRM для подбора</title>
 <script src="./theme.js"></script>
-<link rel="stylesheet" href="./styles.css?v=5">
+<link rel="stylesheet" href="./styles.css?v=6">
 </head>
 <body>
 <main id="team-account" class="team-auth">
@@ -34,6 +34,7 @@
       <p class="nav-label">Рабочее пространство</p>
       <button class="nav-btn active" data-view="board"><span data-icon="board"></span>Воронка</button>
       <button class="nav-btn" data-view="list"><span data-icon="list"></span><span id="team-list-label">Мои лиды</span></button>
+      <button class="nav-btn" data-view="callback"><span data-icon="clock"></span>Перезвонить позже<span class="nav-count" id="callback-count" hidden></span></button>
       <button class="nav-btn" data-view="archive"><span data-icon="archive"></span>Отказ<span class="nav-count" id="archive-count" hidden></span></button>
       <button class="nav-btn" data-view="history" data-owner hidden><span data-icon="history"></span>История импорта</button>
     </nav>
@@ -121,6 +122,6 @@
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0" integrity="sha384-gnyZit14c5lnGcarmA166QQjjJXpucw25ogZXuwH3HxxY904zHkBqmxVpelsPorb" crossorigin="anonymous"></script>
 <script src="./supabase-crm.js"></script>
-<script src="./app.js?v=5"></script>
+<script src="./app.js?v=6"></script>
 </body>
 </html>
