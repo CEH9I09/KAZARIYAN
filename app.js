@@ -510,7 +510,6 @@ const icons = {
   note:'<path d="M4 4h16v12l-4 4H4V4Zm12 16v-4h4M8 9h8m-8 4h5"/>',
   left:'<path d="m14 6-6 6 6 6"/>',
   right:'<path d="m10 6 6 6-6 6"/>',
-  check:'<path d="m5 12 4 4L19 6"/>',
   board:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-16v16"/>',
   list:'<path d="M8 6h12M8 12h12M8 18h12M4 6h.1M4 12h.1M4 18h.1"/>',
   history:'<path d="M3 12a9 9 0 1 1 2.6 6.4M3 8v4h4m5-5v5l3 2"/>',
@@ -522,7 +521,6 @@ const icons = {
   search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   filter:'<path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z"/>',
   chevron:'<path d="m6 9 6 6 6-6"/>',
-  inbox:'<path d="M3 13 6 5h12l3 8v6H3v-6Zm0 0h5l2 3h4l2-3h5"/>',
   phone:'<path d="M7 3H4a1 1 0 0 0-1 1c0 9.4 7.6 17 17 17a1 1 0 0 0 1-1v-3l-5-2-2 2a13 13 0 0 1-7-7l2-2-2-5Z"/>',
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   chat:'<path d="M20 5H4v12h5l3 3v-3h8V5Z"/><path d="M8 9h8m-8 4h6"/>',
@@ -922,30 +920,6 @@ function card(contact,stage) {
     (summary ? '<p class="card-summary" title="'+safe(summary)+'">'+icon(latest && !asText(contact.note) ? 'history' : 'note')+
       '<span>'+safe(summary)+'</span></p>' : '')+'</article>';
 }
-function renderStats(contacts) {
-  const today = localDay();
-  const todaysImports = state.imports.filter(item => !item.restore && localDay(new Date(item.at)) === today);
-  const called = new Set();
-  const wins = new Set();
-  const assignedToday = new Set();
-  for(const contact of contacts) {
-    for(const event of contact.events) {
-      if(localDay(new Date(event.at)) !== today) continue;
-      if(['call','dial'].includes(event.kind)) called.add(contact.id);
-      if(event.kind === 'status' && event.status === 'won') wins.add(contact.id);
-      if(event.kind === 'assignment' && event.assignee === state.account.login) assignedToday.add(contact.id);
-    }
-  }
-  const tiles = [
-    ['Мои лиды',contacts.length,'inbox','purple'],
-    [isOwner() ? 'Новых сегодня' : 'Передано мне сегодня',
-      isOwner() ? todaysImports.reduce((sum,item) => sum + item.added,0) : assignedToday.size,'download','blue'],
-    ['Обзвонено сегодня',called.size,'phone','green'],
-    ['Сделок сегодня',wins.size,'check','canopy']
-  ];
-  $('#stats').innerHTML = tiles.map(([label,value,symbol,color]) => '<div class="stat ' + color + '"><span class="stat-icon">' +
-    icon(symbol) + '</span><span><small>' + label + '</small><strong>' + formatCount(value) + '</strong></span></div>').join('');
-}
 function showNext(id,length) {
   const limit = state.limits[id] ?? (id === 'list' ? 50 : 35);
   return length > limit ? '<button class="button" data-more="' + id + '">Ещё ' + formatCount(Math.min(length - limit,50)) + '</button>' : '';
@@ -1028,7 +1002,6 @@ function render() {
   $('#page-description').textContent = history ? 'Загруженные файлы и результаты обработки.' :
     state.view === 'archive' ? 'Кандидаты, перенесённые в отказ.' : 'Отклики с Авито и этапы работы с кандидатами.';
   $('#pipeline-title').textContent = state.view === 'archive' ? 'Отклонённые лиды' : 'Мои лиды';
-  $('#stats').hidden = history || state.view === 'archive';
   $('#pipeline').hidden = history;
   $('#history').hidden = !history;
   const contacts = state.contacts;
@@ -1042,7 +1015,6 @@ function render() {
   $('#vacancies').innerHTML = '<option value="">Все вакансии</option>' +
     vacancies.map(job => '<option value="' + safe(job) + '">' + safe(job) + '</option>').join('');
   $('#vacancies').value = state.vacancy;
-  renderStats(contacts);
   renderResults();
 }
 function currentContact(id) {
@@ -1545,7 +1517,6 @@ function bindEvents() {
     today = todayNow;
     if(state.view === 'history' || state.drag) return;
     if(dayChanged) {
-      renderStats(state.contacts);
       renderResults();
       return;
     }
@@ -1824,7 +1795,6 @@ function clearAccount(message='') {
   dialog.replaceChildren();
   $('#results').replaceChildren();
   $('#history').replaceChildren();
-  $('#stats').replaceChildren();
   showAccount(message);
 }
 async function signOut() {
