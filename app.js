@@ -126,24 +126,30 @@ function leadAge(contact,now=new Date()) {
   if(!Number.isFinite(origin.valueOf())) return null;
   return {days:calendarDays(origin,now),origin,response:Boolean(response)};
 }
+const birthLabels = new Set(['дата рождения','дата рождения кандидата','дата рождения соискателя','birth date','birthday','date of birth']);
+const ageLabels = new Set(['возраст','возраст кандидата','возраст соискателя','возраст лет','полных лет','age']);
+const cityLabels = new Set(['город','город кандидата','город соискателя','город проживания','место проживания','населенный пункт','местоположение','локация','city','location']);
 function candidateAge(contact,now=new Date()) {
-  for(const [label,raw] of contact.extra ?? []) {
-    if(['дата рождения','дата рождения кандидата','дата рождения соискателя','birth date','birthday','date of birth'].includes(clean(label))) {
-      const birthday = responseDate(/^\d{5}$/.test(raw) ? sheetDate(Number(raw),false) : raw);
-      if(birthday && birthday <= now) {
-        const birthdayThisYear = new Date(now.getFullYear(),birthday.getMonth(),birthday.getDate());
-        if(birthday.getMonth() === 1 && birthday.getDate() === 29 && birthdayThisYear.getMonth() !== 1) birthdayThisYear.setDate(0);
-        const years = now.getFullYear() - birthday.getFullYear() - (now < birthdayThisYear ? 1 : 0);
-        if(years <= 120) return years;
-      }
-    }
+  const extras = contact.extra ?? [];
+  const birthdays = [contact.birthDate,...extras.filter(([label]) => birthLabels.has(clean(label))).map(([,value])=>value)];
+  for(const value of birthdays) {
+    const raw = asText(value);
+    const birthday = responseDate(/^\d{5}$/.test(raw) ? sheetDate(Number(raw),false) : raw);
+    if(!birthday || birthday > now) continue;
+    const birthdayThisYear = new Date(now.getFullYear(),birthday.getMonth(),birthday.getDate());
+    if(birthday.getMonth() === 1 && birthday.getDate() === 29 && birthdayThisYear.getMonth() !== 1) birthdayThisYear.setDate(0);
+    const years = now.getFullYear() - birthday.getFullYear() - (now < birthdayThisYear ? 1 : 0);
+    if(years <= 120) return years;
   }
-  for(const [label,raw] of contact.extra ?? []) {
-    if(!['возраст','возраст кандидата','возраст соискателя','возраст лет','полных лет','age'].includes(clean(label))) continue;
-    const years = /^\s*(\d{1,3})(?:\s*(?:год|года|лет))?\s*$/i.exec(raw)?.[1];
+  const ages = [contact.age,...extras.filter(([label]) => ageLabels.has(clean(label))).map(([,value])=>value)];
+  for(const raw of ages) {
+    const years = /^(\d{1,3})(?:\s*(?:год|года|лет))?$/i.exec(asText(raw))?.[1];
     if(years && Number(years) <= 120) return Number(years);
   }
   return null;
+}
+function candidateCity(contact) {
+  return asText(contact.city) || asText(contact.extra?.find(([label,value]) => cityLabels.has(clean(label)) && asText(value))?.[1]);
 }
 function responseSignature(contact) {
   if(contact.sourceId) return 'id:' + clean(contact.sourceId);
@@ -496,6 +502,9 @@ const icons = {
   archive:'<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v12h14V8m-10 5h6"/>',
   repeat:'<path d="M5 8h14l-3-3m3 3-3 3m3 5H5l3-3m-3 3 3 3"/>',
   send:'<path d="m22 2-7 20-4-9-9-4 20-7ZM11 13l11-11"/>',
+  pin:'<path d="M20 10c0 5-8 10-8 10S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19m0-14-1.5 1.5m-11 11L5 19"/>',
+  moon:'<path d="M20.3 15.5A8.8 8.8 0 0 1 8.5 3.7 8.9 8.9 0 1 0 20.3 15.5Z"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
   logout:'<path d="M10 17l5-5-5-5m5 5H3m9-8h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7"/>',
   note:'<path d="M4 4h16v12l-4 4H4V4Zm12 16v-4h4M8 9h8m-8 4h5"/>',
@@ -526,13 +535,15 @@ const all = selector => [...document.querySelectorAll(selector)];
 const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const uid = () => globalThis.crypto?.randomUUID?.() ?? (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
 const formatter = new Intl.NumberFormat('ru-RU');
+const plurals = new Intl.PluralRules('ru-RU');
 const formatCount = number => formatter.format(number);
+const ageLabel = years => formatCount(years) + ' ' + ({one:'год',few:'года'}[plurals.select(years)] || 'лет');
 const dialog = $('#dialog');
 const relativeDate = new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'short'});
 const exactDate = new Intl.DateTimeFormat('ru-RU',{dateStyle:'medium',timeStyle:'short'});
 const titles = {board:'Воронка',list:'Мои лиды',archive:'Отказ',history:'История импорта'};
 const state = {
-  account:null,members:[],selected:new Set(),revision:-1,contacts:[],imports:[],view:'board',drag:null,limits:{},
+  account:null,members:[],revision:-1,contacts:[],imports:[],view:'board',drag:null,limits:{},
   query:'',vacancy:'',from:'',to:'',status:'',onlyDue:false,importSource:null,importJob:0,committing:false
 };
 let toastTimer;
@@ -546,6 +557,7 @@ let live = false;
 let channelReady = false;
 let redrawAfterDrag = false;
 let ownChanges = 0;
+let transfer = null;
 const arrivals = new Set();
 function toast(message) {
   clearTimeout(toastTimer);
@@ -554,7 +566,8 @@ function toast(message) {
   toastTimer = setTimeout(() => { $('#toast').hidden = true; },4200);
 }
 function showDialog(title,description,body,footer='') {
-  dialog.classList.remove('contact-screen');
+  transfer = null;
+  dialog.classList.remove('contact-screen','transfer-dialog');
   delete dialog.dataset.contactId;
   dialog.innerHTML = '<div class="dialog-header"><div><h2 id="dialog-title">' + safe(title) + '</h2>' +
     (description ? '<p>' + safe(description) + '</p>' : '') + '</div><button class="icon-button" data-close aria-label="Закрыть">' +
@@ -602,7 +615,6 @@ function replaceContacts(contacts,animate=true) {
     for(const id of ids) if(!previous.has(id)) arrivals.add(id);
   }
   for(const id of removed) {
-    state.selected.delete(id);
     arrivals.delete(id);
   }
   state.contacts = contacts;
@@ -610,6 +622,7 @@ function replaceContacts(contacts,animate=true) {
   if(state.drag) redrawAfterDrag = true;
   else { redrawAfterDrag = false; render(); }
   syncOpenContact();
+  syncTransferDialog();
 }
 function applyWorkspace(data) {
   const animate = state.revision !== -1;
@@ -893,16 +906,21 @@ function quickActions(contact) {
       '<button type="button" class="quick ' + stageById[status].color + '" data-quick="' + status + '" data-for="' + safe(contact.id) + '">' + label + '</button>').join('') +
     '</div>';
 }
-function transferButton(contact) {
-  return '<button class="card-transfer" type="button" data-team-assign="'+safe(contact.id)+'" aria-label="Передать: '+
-    safe(labelOf(contact))+'" title="Передать лид">'+icon('send')+'<span>Передать</span></button>';
-}
 function card(contact,stage) {
+  const years = candidateAge(contact);
+  const city = candidateCity(contact);
+  const latest = contact.events.at(-1);
+  const summary = asText(contact.note) || (latest ? eventLabel(latest) : '');
+  const age = years === null ? 'Возраст не указан' : ageLabel(years);
   return '<article draggable="true" class="candidate' + (isOverdue(contact) ? ' overdue' : '') +
     (arrivals.delete(contact.id) ? ' entering' : '') + '" data-card="' + safe(contact.id) +
-    '"><div class="card-top">' + candidateName(contact) + pickLead(contact) + '</div>'+
-    '<div class="card-bottom"><span class="tag '+stage.color+'">'+stage.name+'</span>'+
-    transferButton(contact)+'</div></article>';
+    '"><div class="card-top">' + candidateName(contact) + '</div>'+
+    '<div class="card-phone">'+phoneHTML(contact)+'</div>'+
+    '<div class="card-meta"><span>'+safe(age)+'</span><span class="card-city" title="'+safe(city)+'">'+icon('pin')+
+    '<span>'+safe(city || 'Город не указан')+'</span></span></div>'+
+    '<div class="card-bottom"><span class="tag '+stage.color+'">'+stage.name+'</span></div>'+
+    (summary ? '<p class="card-summary" title="'+safe(summary)+'">'+icon(latest && !asText(contact.note) ? 'history' : 'note')+
+      '<span>'+safe(summary)+'</span></p>' : '')+'</article>';
 }
 function renderStats(contacts) {
   const today = localDay();
@@ -968,10 +986,10 @@ function renderResults() {
   const archive = state.view === 'archive';
   const contacts = viewContacts();
   const visible = filteredContacts(contacts);
-  $('#team-select').disabled = !visible.length;
   $('#clear-filters').hidden = !(state.query || state.vacancy || state.status || state.from || state.to || state.onlyDue);
   const listView = state.view !== 'board';
   $('#board-controls').hidden = listView;
+  $('#board-toolbar').hidden = listView;
   $('.switcher').hidden = archive;
   $('#status-control').hidden = archive;
   $('#due-control').hidden = archive;
@@ -980,7 +998,7 @@ function renderResults() {
       visible.slice(0,state.limits.list ?? 50).map(contact => '<tr' + (isOverdue(contact) ? ' class="overdue"' : '') + '><td>' + candidateName(contact) + repeatBadge(contact) + callbackHTML(contact) + '</td><td>' + phoneHTML(contact) + '</td><td>' +
         safe(jobOf(contact)) + '</td><td><span class="tag ' + stageById[contact.status].color + '">' + stageById[contact.status].name +
         '</span></td><td>' + safe(dateOf(contact)) + '</td><td>' + leadAgeHTML(contact) + '</td><td><div class="row-actions">' +
-        archiveAction(contact) + transferButton(contact) + pickLead(contact) + '</div></td></tr>').join('') + '</tbody></table></div>' + showNext('list',visible.length)
+        archiveAction(contact) + '</div></td></tr>').join('') + '</tbody></table></div>' + showNext('list',visible.length)
       : '<div class="empty-panel panel">' + (contacts.length ? 'Совпадений нет.' : archive ? 'Здесь появятся кандидаты, перенесённые в отказ.' : 'Список откликов пуст.') + '</div>';
     return;
   }
@@ -1000,8 +1018,6 @@ function renderResults() {
 }
 function render() {
   const history = state.view === 'history';
-  renderSelection();
-  $('#team-tools').hidden = !state.account || history;
   for(const button of all('button[data-view]')) {
     const active = button.dataset.view === state.view;
     button.classList.toggle('active',active);
@@ -1101,14 +1117,14 @@ function detailDialog(id) {
   const years = candidateAge(contact);
   const facts = [['Вакансия',contact.job],['Дата отклика',contact.date],
     ['Возраст лида',age && formatCount(age.days) + ' дн. · ' + (age.response ? 'с первого отклика' : 'с загрузки в CRM')],
-    ['Возраст кандидата',years === null ? '' : formatCount(years) + ' лет'],
-    ['ID отклика',contact.sourceId],['ID объявления',contact.adId],...contact.extra]
+    ['Возраст кандидата',years === null ? '' : ageLabel(years)],['Город',candidateCity(contact)],
+    ['ID отклика',contact.sourceId],['ID объявления',contact.adId],
+    ...contact.extra.filter(([label]) => !ageLabels.has(clean(label)) && !cityLabels.has(clean(label)))]
     .filter(([,value]) => value).map(([key,value]) => '<div><dt>' + safe(key) + '</dt><dd>' + safe(value) + '</dd></div>').join('');
-  const assign = '<button class="button" data-team-assign="'+safe(contact.id)+'">Передать</button>';
   const contacts = '<div class="contact-identity"><span class="avatar contact-avatar ' + stage.color + '">' + safe(initialsOf(contact)) +
     '</span><div><h2 id="dialog-title">' + safe(labelOf(contact)) + '</h2><p>' + safe(jobOf(contact)) +
     '</p></div></div><div class="contact-badges"><span id="contact-stage-badge" class="tag ' + stage.color + '">' + stage.name + '</span>' +
-    repeatBadge(contact) + assign + (isOwner() ? '<button class="button ghost" data-delete-lead="'+safe(id)+'">Удалить</button>' : '') + '</div>';
+    repeatBadge(contact) + (isOwner() ? '<button class="button ghost" data-delete-lead="'+safe(id)+'">Удалить</button>' : '') + '</div>';
   dialog.classList.add('contact-screen');
   dialog.dataset.contactId = id;
   dialog.innerHTML = '<header class="contact-top"><button class="button contact-back" data-close autofocus>' + icon('left') +
@@ -1362,9 +1378,11 @@ function readBackup(data) {
       throw new Error('В копии повреждены данные об откликах.');
     }
     const {id,name,phone,status,updatedAt,extra,assignedLogin} = contact;
+    const profile = Object.fromEntries(['age','birthDate','city'].filter(key => typeof contact[key] === 'string' ||
+      (key === 'age' && typeof contact[key] === 'number')).map(key=>[key,contact[key]]));
     const assignment = assignedLogin === null || ['Казарян','Архипов','Стафеев'].includes(assignedLogin)
       ? {assignedLogin} : {};
-    return {...assignment,id,name,phone,status:status === 'working' ? 'talking' : status,updatedAt,extra,attempts,reminder,events,responseKeys:[...new Set(responseKeys)],source:asText(contact.source),job:asText(contact.job),date:asText(contact.date),firstResponseDate:asText(contact.firstResponseDate) || previousResponseDate(contact),
+    return {...assignment,...profile,id,name,phone,status:status === 'working' ? 'talking' : status,updatedAt,extra,attempts,reminder,events,responseKeys:[...new Set(responseKeys)],source:asText(contact.source),job:asText(contact.job),date:asText(contact.date),firstResponseDate:asText(contact.firstResponseDate) || previousResponseDate(contact),
       sourceId:asText(contact.sourceId),adId:asText(contact.adId),note:asText(contact.note)};
   });
   const logs = data.imports.map(log => {
@@ -1460,7 +1478,6 @@ function bindEvents() {
     item.setAttribute('aria-label',item.textContent.trim());
   }
   document.addEventListener('click',event => {
-    if(event.target.closest('.team-pick,[data-team-assign]')) return;
     const target = event.target.closest('[data-view],[data-import],[data-contact],[data-close],[data-more],[data-quick],[data-archive],[data-phone],[data-card]');
     if(!target) return;
     if(target.hasAttribute('data-view')) {
@@ -1500,6 +1517,7 @@ function bindEvents() {
     if(dialog.open) return;
     state.importJob++;
     delete dialog.dataset.contactId;
+    transfer = null;
   });
   $('#search').addEventListener('input',event => { state.query = event.target.value; state.limits = {}; renderResults(); });
   $('#vacancies').addEventListener('change',event => { state.vacancy = event.target.value; state.limits = {}; renderResults(); });
@@ -1562,17 +1580,6 @@ function bindEvents() {
   bindDrag();
 }
 function isOwner() { return state.account?.role === 'owner'; }
-function pickLead(contact) {
-  return '<label class="team-pick" title="Выбрать лид"><input type="checkbox" data-select-lead value="' +
-    safe(contact.id) + '" aria-label="Выбрать: ' + safe(labelOf(contact)) + '"' +
-    (state.selected.has(contact.id) ? ' checked' : '') + '></label>';
-}
-function renderSelection() {
-  $('#team-assign').disabled = !state.selected.size;
-  $('#team-assign').hidden = !state.selected.size;
-  $('#team-assign').textContent = 'Передать лиды' + (state.selected.size ? ' · '+state.selected.size : '');
-  $('#team-clear').hidden = !state.selected.size;
-}
 function managePeople() {
   const members = state.members.map(member=>'<li><div><strong>'+safe(member.login)+'</strong><small>'+
     (member.role === 'owner' ? 'Администратор' : 'Сотрудник')+'</small></div><span>'+
@@ -1584,6 +1591,8 @@ function createLead() {
   showDialog('Новый лид','',
     '<form id="new-lead-form"><label class="field">ФИО<input name="name" maxlength="200" required></label>'
     + '<label class="field">Телефон<input name="phone" type="tel" maxlength="40"></label>'
+    + '<div class="fields"><label class="field">Возраст<input name="age" type="number" min="0" max="120" step="1"></label>'
+    + '<label class="field">Город<input name="city" maxlength="150"></label></div>'
     + '<label class="field">Вакансия<input name="job" maxlength="200"></label>'
     + '<div class="dialog-footer"><button class="button" type="button" data-close>Отмена</button>'
     + '<button class="button primary" type="submit">Создать</button></div></form>');
@@ -1598,7 +1607,8 @@ function createLead() {
     state.committing = true;
     if(submit) submit.disabled = true;
     try {
-      const contact = {name,phone:asText(fields.get('phone')),job:asText(fields.get('job')),date:'',sourceId:'',adId:'',extra:[]};
+      const extra = [['Возраст',asText(fields.get('age'))],['Город',asText(fields.get('city'))]].filter(([,value])=>value);
+      const contact = {name,phone:asText(fields.get('phone')),job:asText(fields.get('job')),date:'',sourceId:'',adId:'',extra};
       const {added} = await persistCandidates({contacts:[contact],file:'Ручное добавление',source:'manual'});
       await refreshAfterWrite();
       if(form.isConnected && dialog.open) dialog.close();
@@ -1628,33 +1638,102 @@ function deleteLead(id) {
     finally { state.committing = false; submit.disabled = false; }
   };
 }
-function assignLeads(ids) {
-  if(!ids.length) return;
-  if(ids.length > 5000) { toast('Выбери до 5 000 карточек за раз.'); return; }
-  const sender = state.account;
-  const assignable = state.members.filter(member=>member.active && member.id !== sender.id);
-  if(!assignable.length) { toast('Сейчас нет доступных получателей.'); return; }
-  const options = '<option value="" disabled selected>Выбери получателя</option>'+
-    assignable.map(member=>'<option value="'+safe(member.id)+'">'+safe(member.login)+'</option>').join('');
-  showDialog('Передать лиды','Выбрано '+formatCount(ids.length),
-    '<label class="field">Кому передать<select id="team-assignee">'+options+'</select></label>',
-    '<button class="button" data-close>Отмена</button><button class="button primary" id="team-assign-submit" disabled>Передать</button>');
+function updateTransferControls() {
+  $('#transfer-count').textContent = 'Выбрано '+formatCount(transfer.ids.size);
+  $('#team-assign-submit').disabled = !transfer.ids.size || transfer.ids.size > 5000 || !$('#team-assignee').value;
+  $('#transfer-limit').hidden = transfer.ids.size <= 5000;
+}
+function syncTransferDialog() {
+  if(!transfer || !dialog.open || transfer.sending) return;
+  const available = new Set(state.contacts.map(contact=>contact.id));
+  for(const id of transfer.ids) if(!available.has(id)) transfer.ids.delete(id);
   const recipient = $('#team-assignee');
-  recipient.onchange = () => { $('#team-assign-submit').disabled = !recipient.value; };
+  const chosen = recipient.value;
+  const members = state.members.filter(member=>member.active && member.id !== state.account.id);
+  recipient.innerHTML = '<option value="" disabled>'+ (members.length ? 'Выберите коллегу' : 'Нет получателей')+'</option>'+
+    members.map(member=>'<option value="'+safe(member.id)+'">'+safe(member.login)+'</option>').join('');
+  recipient.value = members.some(member=>member.id === chosen) ? chosen : '';
+  recipient.disabled = !members.length;
+  const stage = $('#transfer-stage').value;
+  const contacts = state.contacts.filter(contact=>!stage || contact.status===stage);
+  const list = $('#transfer-list');
+  const focusId = list.contains(document.activeElement) ? document.activeElement.value : null;
+  const scroll = list.scrollTop;
+  list.innerHTML = contacts.map(contact => {
+    const status = stageById[contact.status];
+    const name = labelOf(contact);
+    return '<label class="transfer-row"><input type="checkbox" name="transfer-lead" value="'+safe(contact.id)+
+      '" aria-label="Выбрать: '+safe(name)+'"'+(transfer.ids.has(contact.id) ? ' checked' : '')+'>'+
+      '<span class="transfer-person"><strong>'+safe(name)+'</strong>'+
+      (contact.phone ? '<small>'+safe(contact.phone)+'</small>' : '')+'</span>'+
+      '<span class="tag '+status.color+'">'+status.name+'</span></label>';
+  }).join('') || '<p class="transfer-empty">'+(state.contacts.length ? 'На этом этапе кандидатов нет.' : 'У вас пока нет кандидатов.')+'</p>';
+  if(focusId) {
+    [...list.querySelectorAll('input')].find(input=>input.value === focusId)?.focus({preventScroll:true});
+  }
+  list.scrollTop = scroll;
+  updateTransferControls();
+}
+function openTransferDialog() {
+  const stagesHTML = [...stages,archivedStage].map(stage=>'<option value="'+stage.id+'">'+stage.name+'</option>').join('');
+  showDialog('Передать лиды','Выберите кандидатов и получателя.',
+    '<fieldset class="transfer-fields" id="transfer-fields"><div class="transfer-filters">'+
+    '<label class="field">Этап<select id="transfer-stage"><option value="">Все этапы</option>'+stagesHTML+'</select></label>'+
+    '<label class="field">Кому передать<select id="team-assignee"></select></label></div>'+
+    '<div id="transfer-list" class="transfer-list" role="group" aria-label="Кандидаты"></div></fieldset>'+
+    '<p class="notice error" id="transfer-error" role="alert" hidden></p>'+
+    '<p class="notice" id="transfer-limit" hidden>За один раз можно передать до 5 000 кандидатов.</p>',
+    '<span id="transfer-count" class="transfer-count" aria-live="polite"></span>'+
+    '<button class="button" type="button" data-close>Отмена</button>'+
+    '<button class="button primary" id="team-assign-submit" type="button" disabled>Передать</button>');
+  dialog.classList.add('transfer-dialog');
+  const current = {ids:new Set(),sending:false};
+  transfer = current;
+  const stage = $('#transfer-stage');
+  const list = $('#transfer-list');
+  const fieldset = $('#transfer-fields');
+  stage.onchange = () => { list.scrollTop = 0; syncTransferDialog(); };
+  $('#team-assignee').onchange = updateTransferControls;
+  list.onchange = event => {
+    const input = event.target;
+    if(input.name !== 'transfer-lead') return;
+    if(input.checked) current.ids.add(input.value);
+    else current.ids.delete(input.value);
+    updateTransferControls();
+  };
   $('#team-assign-submit').onclick = async event => {
+    const sender = state.account;
+    const ids = [...current.ids];
+    const recipient = $('#team-assignee').value;
     const button = event.currentTarget;
-    button.disabled = true;
+    const banner = $('#transfer-error');
+    current.sending = state.committing = fieldset.disabled = button.disabled = true;
+    button.textContent = 'Передаём…';
+    banner.hidden = true;
     try {
-      const changed = await database.assign(ids,recipient.value);
-      if(state.account?.id !== sender.id) return;
+      const changed = await database.assign(ids,recipient);
+      if(state.account !== sender) return;
       ownChanges++;
       const passed = new Set(ids);
       replaceContacts(state.contacts.filter(contact=>!passed.has(contact.id)));
       if(button.isConnected && dialog.open) dialog.close();
       toast('Передано карточек: '+formatCount(changed));
       await refreshAfterWrite();
-    } catch(cause) { button.disabled=false; report(cause); }
+    } catch(cause) {
+      if(transfer !== current || !dialog.open) return;
+      banner.textContent = cause?.message || 'Не удалось передать лидов.';
+      banner.hidden = false;
+      scheduleRefresh();
+    } finally {
+      if(state.account === sender) state.committing = false;
+      if(transfer === current && dialog.open) {
+        current.sending = fieldset.disabled = false;
+        button.textContent = 'Передать';
+        syncTransferDialog();
+      }
+    }
   };
+  syncTransferDialog();
 }
 function showAccount(message='') {
   $('.layout').hidden = !state.account;
@@ -1666,12 +1745,12 @@ function showAccount(message='') {
     $('#team-role').textContent = isOwner() ? 'Администратор' : 'Сотрудник';
     return;
   }
-  $('#team-account').innerHTML = '<section class="team-auth-panel"><p class="team-auth-brand">Земля · CRM</p>'+
-      '<h1>Вход в «Землю»</h1><form id="team-account-form">'+
+  $('#auth-content').innerHTML = '<p class="team-auth-brand">'+icon('logo')+'Земля</p>'+
+      '<h1 id="auth-title">Вход в CRM</h1><form id="team-account-form">'+
     '<label class="field">Логин<input name="login" autocomplete="username" placeholder="Фамилия" maxlength="40" required></label>'+
     '<label class="field">Пароль<input type="password" name="password" autocomplete="current-password" maxlength="128" required></label>'+
     '<p id="team-account-error" class="notice error" role="alert"'+(message ? '' : ' hidden')+'>'+safe(message)+'</p>'+
-    '<button class="button primary" type="submit"'+(database ? '' : ' disabled')+'>Войти</button></form></section>';
+    '<button class="button primary" type="submit"'+(database ? '' : ' disabled')+'>Войти</button></form>';
   $('#team-account-form').onsubmit = async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -1735,7 +1814,8 @@ function clearAccount(message='') {
   state.contacts = [];
   state.imports = [];
   state.members = [];
-  state.selected.clear();
+  transfer = null;
+  state.committing = false;
   arrivals.clear();
   state.drag = null;
   state.importSource = null;
@@ -1754,23 +1834,9 @@ async function signOut() {
 function bindTeam() {
   $('#team-people').onclick = managePeople;
   $('#new-lead').onclick = createLead;
-  $('#team-assign').onclick = () => assignLeads([...state.selected]);
-  $('#team-select').onclick = () => {
-    state.selected = new Set(filteredContacts(viewContacts()).map(contact => contact.id));
-    render();
-  };
-  $('#team-clear').onclick = () => { state.selected.clear(); render(); };
+  $('#team-assign').onclick = openTransferDialog;
   $('#mode').onclick = signOut;
-  document.addEventListener('change',event => {
-    const box = event.target.closest('[data-select-lead]');
-    if(!box) return;
-    if(box.checked) state.selected.add(box.value);
-    else state.selected.delete(box.value);
-    renderSelection();
-  });
   document.addEventListener('click',event => {
-    const link = event.target.closest('[data-team-assign]');
-    if(link) assignLeads([link.dataset.teamAssign]);
     const deletion = event.target.closest('[data-delete-lead]');
     if(deletion) deleteLead(deletion.dataset.deleteLead);
   });
@@ -1841,8 +1907,7 @@ start();
     }
   }
 
-  async function start() {
-    const figure = document.querySelector('.earth-illustration');
+  async function start(figure) {
     const canvas = figure?.querySelector('.earth-live');
     const texture = figure?.querySelector('.earth-texture');
     if(!canvas || !texture || !canvas.getContext) return;
@@ -1859,14 +1924,15 @@ start();
       const compact = matchMedia('(max-width: 650px)');
       const reduce = matchMedia('(prefers-reduced-motion: reduce)');
       let visible = !('IntersectionObserver' in window);
-      let geometry, frame, handle=0, last=0, age=0;
+      const auth = figure.dataset.globe === 'auth';
+      let geometry, frame, handle=0, last=0, age=auth ? 7800 : 0;
 
       const showFrame = () => {
-        paint(frame.data,pixels,geometry,1024,(age/40800)%1);
+        paint(frame.data,pixels,geometry,1024,(age/(auth ? 75000 : 40800))%1);
         context.putImageData(frame,0,0);
       };
       const resize = () => {
-        canvas.width = canvas.height = compact.matches ? 192 : 284;
+        canvas.width = canvas.height = auth ? (compact.matches ? 248 : 408) : (compact.matches ? 192 : 284);
         geometry = prepareGlobe(canvas.width,1024,512);
         frame = context.createImageData(canvas.width,canvas.height);
         showFrame();
@@ -1907,5 +1973,5 @@ start();
     }
   }
 
-  start();
+  for(const figure of document.querySelectorAll('[data-globe]')) start(figure);
 })();

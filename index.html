@@ -3,15 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light">
 <meta name="theme-color" content="#23382c">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://xjiyiwzzqghhgzxdqvhy.supabase.co wss://xjiyiwzzqghhgzxdqvhy.supabase.co; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>Земля — CRM для подбора</title>
-<link rel="stylesheet" href="./styles.css">
+<script src="./theme.js"></script>
+<link rel="stylesheet" href="./styles.css?v=3">
 </head>
 <body>
-<div id="team-account" class="team-auth"><p>Проверяем вход…</p></div>
+<main id="team-account" class="team-auth">
+  <button class="icon-button theme-toggle auth-theme" type="button" data-theme-switch aria-label="Тёмная тема" aria-pressed="false">
+    <span class="theme-moon" data-icon="moon"></span><span class="theme-sun" data-icon="sun"></span>
+  </button>
+  <div class="auth-composition">
+    <div class="auth-scene" aria-hidden="true">
+      <div class="earth-illustration auth-globe" data-globe="auth">
+        <div class="earth-orbit"></div>
+        <div class="earth-frame"><img src="./assets/earth.jpg" alt="" width="340" height="340"></div>
+        <canvas class="earth-live" width="408" height="408"></canvas>
+        <img class="earth-texture" src="./assets/earth-texture.jpg" alt="">
+      </div>
+    </div>
+    <section class="team-auth-panel" id="auth-content" aria-labelledby="auth-title"><p>Проверяем вход…</p></section>
+  </div>
+</main>
 <div class="layout" hidden>
   <aside class="sidebar">
     <a class="brand" href="#" data-view="board"><span class="brand-mark" data-icon="logo"></span><span>Земля<span class="brand-sub">CRM для подбора</span></span></a>
@@ -32,10 +47,16 @@
   <main class="main">
     <header class="topbar">
       <div class="crumb"><span>Рабочее пространство</span><span data-icon="right"></span><strong id="crumb-current">Воронка</strong></div>
-      <div class="profile">
-        <span class="profile-avatar" data-icon="user"></span>
-        <div><strong id="team-who"></strong><small id="team-role"></small></div>
-        <button class="icon-button logout" id="mode" type="button" aria-label="Выйти" title="Выйти"><span data-icon="logout"></span></button>
+      <div class="topbar-actions">
+        <button type="button" class="button primary transfer-open" id="team-assign" aria-haspopup="dialog"><span data-icon="send"></span>Передать лиды</button>
+        <button class="icon-button theme-toggle" type="button" data-theme-switch aria-label="Тёмная тема" aria-pressed="false">
+          <span class="theme-moon" data-icon="moon"></span><span class="theme-sun" data-icon="sun"></span>
+        </button>
+        <div class="profile">
+          <span class="profile-avatar" data-icon="user"></span>
+          <div><strong id="team-who"></strong><small id="team-role"></small></div>
+          <button class="icon-button logout" id="mode" type="button" aria-label="Выйти" title="Выйти"><span data-icon="logout"></span></button>
+        </div>
       </div>
     </header>
 
@@ -46,7 +67,7 @@
           <h1 id="page-title">Воронка кандидатов</h1>
           <p id="page-description">Ваши кандидаты и этапы работы с ними.</p>
         </div>
-        <div class="earth-illustration" aria-hidden="true">
+        <div class="earth-illustration" data-globe="hero" aria-hidden="true">
           <div class="earth-orbit"></div>
           <div class="earth-frame"><img src="./assets/earth.jpg" alt="" width="340" height="340"></div>
           <canvas class="earth-live" width="284" height="284"></canvas>
@@ -84,12 +105,7 @@
             </details>
           </div>
         </div>
-        <div class="board-toolbar">
-          <div class="team-tools" id="team-tools" hidden>
-            <button type="button" class="button" id="team-select" disabled>Выбрать по фильтрам</button>
-            <button type="button" class="button primary" id="team-assign" disabled hidden>Передать лиды</button>
-            <button type="button" class="button ghost" id="team-clear" hidden>Снять выбор</button>
-          </div>
+        <div class="board-toolbar" id="board-toolbar">
           <div class="board-controls" id="board-controls">
             <button class="icon-button" type="button" id="scroll-left" aria-label="Этапы влево"><span data-icon="left"></span></button>
             <button class="icon-button" type="button" id="scroll-right" aria-label="Этапы вправо"><span data-icon="right"></span></button>
@@ -107,6 +123,6 @@
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0" integrity="sha384-gnyZit14c5lnGcarmA166QQjjJXpucw25ogZXuwH3HxxY904zHkBqmxVpelsPorb" crossorigin="anonymous"></script>
 <script src="./supabase-crm.js"></script>
-<script src="./app.js"></script>
+<script src="./app.js?v=3"></script>
 </body>
 </html>
