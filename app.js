@@ -39,7 +39,7 @@ function phoneKey(value) {
 function formatPhone(value) {
   const text = asText(value);
   const number = phoneKey(text);
-  const parts = /^(7)(\d{3})(\d{3})(\d{4})$/.exec(number);
+  const parts = /^(7)(\d{3})(\d{3})(\d{3})(\d)$/.exec(number);
   const extension = text.match(/\s+(?:доб\.?|ext\.?|#)\s*\d+$/i)?.[0] ?? '';
   return parts ? parts.slice(1).join('-') + extension : text;
 }
@@ -137,8 +137,12 @@ function leadAge(contact,now=new Date()) {
   return {days:calendarDays(origin,now),origin,response:Boolean(response)};
 }
 const birthLabels = new Set(['дата рождения','дата рождения кандидата','дата рождения соискателя','birth date','birthday','date of birth']);
-const ageLabels = new Set(['возраст','возраст кандидата','возраст соискателя','возраст лет','полных лет','age']);
-const cityLabels = new Set(['город','город кандидата','город соискателя','город проживания','место проживания','населенный пункт','местоположение','локация','city','location']);
+const ageLabels = new Set(['возраст','возраст кандидата','возраст соискателя','возраст лет','полных лет','сколько лет','age']);
+const cityLabels = new Set(['город','город кандидата','город соискателя','город проживания','город регистрации','место проживания','населенный пункт','местоположение','локация','city','location']);
+const workplaceLabels = new Set(['место работы','место работы кандидата','текущее место работы','последнее место работы','организация','компания','работодатель','workplace','employer','company']);
+function extraValue(contact,labels) {
+  return asText(contact.extra?.find(([label,value]) => labels.has(clean(label)) && asText(value))?.[1]);
+}
 function candidateAge(contact,now=new Date()) {
   const extras = contact.extra ?? [];
   const birthdays = [contact.birthDate,...extras.filter(([label]) => birthLabels.has(clean(label))).map(([,value])=>value)];
@@ -159,7 +163,10 @@ function candidateAge(contact,now=new Date()) {
   return null;
 }
 function candidateCity(contact) {
-  return asText(contact.city) || asText(contact.extra?.find(([label,value]) => cityLabels.has(clean(label)) && asText(value))?.[1]);
+  return asText(contact.city) || extraValue(contact,cityLabels);
+}
+function candidateWorkplace(contact) {
+  return asText(contact.workplace) || extraValue(contact,workplaceLabels);
 }
 function responseSignature(contact) {
   if(contact.sourceId) return 'id:' + clean(contact.sourceId);
@@ -887,6 +894,18 @@ function callbackHTML(contact) {
   return '<span class="callback" data-time="' + contact.reminder + '">' + icon('clock') + '<span>' +
     (isOverdue(contact) ? 'Просрочено · ' : 'Перезвонить · ') + safe(exactDate.format(contact.reminder)) + '</span></span>';
 }
+function candidateLocationAge(contact) {
+  const city = candidateCity(contact);
+  const years = candidateAge(contact);
+  return '<span class="card-meta"><span class="card-city">' + icon('pin') + '<span>' + safe(city || 'Город не указан') +
+    '</span></span><span class="card-age">' + (years === null ? 'Возраст не указан' : safe(ageLabel(years))) + '</span></span>';
+}
+function candidateWork(contact) {
+  const workplace = candidateWorkplace(contact);
+  const vacancy = asText(contact.job);
+  const label = workplace || !vacancy ? 'Место работы' : 'Вакансия';
+  return '<span class="card-work"><span>' + label + '</span><strong>' + safe(workplace || vacancy || 'Не указано') + '</strong></span>';
+}
 function leadAgeHTML(contact,now=new Date()) {
   const age = leadAge(contact,now);
   if(!age) return '—';
@@ -910,17 +929,12 @@ function quickActions(contact,compact=false) {
     calls + other + '</div>';
 }
 function card(contact,stage) {
-  const years = candidateAge(contact);
-  const city = candidateCity(contact);
   const latest = contact.events.findLast(event => event.kind !== 'repeat');
   const summary = asText(contact.note) || (latest ? eventLabel(latest) : '');
-  const age = years === null ? 'Возраст не указан' : ageLabel(years);
   return '<article draggable="' + (stage.id !== callbackStage.id) + '" class="candidate' + (isOverdue(contact) ? ' overdue' : '') +
     (arrivals.delete(contact.id) ? ' entering' : '') + '" data-card="' + safe(contact.id) +
     '"><div class="card-top">' + candidateName(contact) + '</div>'+
-    '<div class="card-phone">'+phoneHTML(contact)+'</div>'+
-    '<div class="card-meta"><span>'+safe(age)+'</span><span class="card-city" title="'+safe(city)+'">'+icon('pin')+
-    '<span>'+safe(city || 'Город не указан')+'</span></span></div>'+
+    '<div class="card-phone">'+phoneHTML(contact)+'</div>'+candidateWork(contact)+candidateLocationAge(contact)+
     '<div class="card-bottom"><span class="tag '+stage.color+'">'+stage.name+'</span></div>'+
     callbackHTML(contact)+
     (summary ? '<p class="card-summary" title="'+safe(summary)+'">'+icon(latest && !asText(contact.note) ? 'history' : 'note')+
@@ -984,9 +998,9 @@ function renderResults() {
     return;
   }
   if(listView) {
-    $('#results').innerHTML = visible.length ? '<div class="panel"><table class="table"><thead><tr><th>Кандидат</th><th>Телефон</th><th>Вакансия</th><th>Статус</th><th>Дата отклика</th><th>Возраст лида</th><th>Действия</th></tr></thead><tbody>' +
-      visible.slice(0,state.limits.list ?? 50).map(contact => '<tr' + (isOverdue(contact) ? ' class="overdue"' : '') + '><td>' + candidateName(contact) + callbackHTML(contact) + '</td><td>' + phoneHTML(contact) + '</td><td>' +
-        safe(jobOf(contact)) + '</td><td><span class="tag ' + stageById[contact.status].color + '">' + stageById[contact.status].name +
+    $('#results').innerHTML = visible.length ? '<div class="panel"><table class="table lead-table"><thead><tr><th>Кандидат</th><th>Телефон</th><th>Работа</th><th>Статус</th><th>Дата отклика</th><th>Возраст лида</th><th>Действия</th></tr></thead><tbody>' +
+      visible.slice(0,state.limits.list ?? 50).map(contact => '<tr' + (isOverdue(contact) ? ' class="overdue"' : '') + '><td>' + candidateName(contact) + candidateLocationAge(contact) + callbackHTML(contact) + '</td><td>' + phoneHTML(contact) + '</td><td>' +
+        candidateWork(contact) + '</td><td><span class="tag ' + stageById[contact.status].color + '">' + stageById[contact.status].name +
         '</span></td><td>' + safe(dateOf(contact)) + '</td><td>' + leadAgeHTML(contact) + '</td><td><div class="row-actions">' +
         archiveAction(contact) + '</div></td></tr>').join('') + '</tbody></table></div>' + showNext('list',visible.length)
       : '<div class="empty-panel panel">' + (contacts.length ? 'Совпадений нет.' : archive ? 'Здесь появятся кандидаты, перенесённые в отказ.' : 'Список откликов пуст.') + '</div>';
@@ -1100,16 +1114,14 @@ function detailDialog(id) {
   const stageOptions = allStages.map(item => '<option value="' + item.id + '"' +
     (item.id === contact.status ? ' selected' : '') + '>' + item.name + '</option>').join('');
   const age = leadAge(contact);
-  const years = candidateAge(contact);
-  const facts = [['Вакансия',contact.job],['Дата отклика',contact.date],
+  const facts = [['Вакансия',candidateWorkplace(contact) && contact.job],['Дата отклика',contact.date],
     ['Возраст лида',age && formatCount(age.days) + ' дн. · ' + (age.response ? 'с первого отклика' : 'с загрузки в CRM')],
-    ['Возраст кандидата',years === null ? '' : ageLabel(years)],['Город',candidateCity(contact)],
     ['ID отклика',contact.sourceId],['ID объявления',contact.adId],
-    ...contact.extra.filter(([label]) => !ageLabels.has(clean(label)) && !cityLabels.has(clean(label)))]
+    ...(contact.extra ?? []).filter(([label]) => ![ageLabels,cityLabels,workplaceLabels].some(labels => labels.has(clean(label))))]
     .filter(([,value]) => value).map(([key,value]) => '<div><dt>' + safe(key) + '</dt><dd>' + safe(value) + '</dd></div>').join('');
   const contacts = '<div class="contact-identity"><span class="avatar contact-avatar ' + stage.color + '">' + safe(initialsOf(contact)) +
-    '</span><div><h2 id="dialog-title">' + safe(labelOf(contact)) + '</h2><p>' + safe(jobOf(contact)) +
-    '</p></div></div><div class="contact-badges"><span id="contact-stage-badge" class="tag ' + stage.color + '">' + stage.name + '</span>' +
+    '</span><div><h2 id="dialog-title">' + safe(labelOf(contact)) + '</h2>' + candidateWork(contact) + candidateLocationAge(contact) +
+    '</div></div><div class="contact-badges"><span id="contact-stage-badge" class="tag ' + stage.color + '">' + stage.name + '</span>' +
     (isOwner() ? '<button class="button ghost" data-delete-lead="'+safe(id)+'">Удалить</button>' : '') + '</div>';
   dialog.classList.add('contact-screen');
   dialog.dataset.contactId = id;
@@ -1365,7 +1377,7 @@ function readBackup(data) {
       throw new Error('В копии повреждены данные об откликах.');
     }
     const {id,name,phone,status,updatedAt,extra,assignedLogin} = contact;
-    const profile = Object.fromEntries(['age','birthDate','city'].filter(key => typeof contact[key] === 'string' ||
+    const profile = Object.fromEntries(['age','birthDate','city','workplace'].filter(key => typeof contact[key] === 'string' ||
       (key === 'age' && typeof contact[key] === 'number')).map(key=>[key,contact[key]]));
     const assignment = assignedLogin === null || ['Казарян','Архипов','Стафеев'].includes(assignedLogin)
       ? {assignedLogin} : {};
@@ -1580,6 +1592,7 @@ function createLead() {
     + '<label class="field">Телефон<input name="phone" type="tel" maxlength="40"></label>'
     + '<div class="fields"><label class="field">Возраст<input name="age" type="number" min="0" max="120" step="1"></label>'
     + '<label class="field">Город<input name="city" maxlength="150"></label></div>'
+    + '<label class="field">Место работы<input name="workplace" maxlength="200"></label>'
     + '<label class="field">Вакансия<input name="job" maxlength="200"></label>'
     + '<div class="dialog-footer"><button class="button" type="button" data-close>Отмена</button>'
     + '<button class="button primary" type="submit">Создать</button></div></form>');
@@ -1594,7 +1607,8 @@ function createLead() {
     state.committing = true;
     if(submit) submit.disabled = true;
     try {
-      const extra = [['Возраст',asText(fields.get('age'))],['Город',asText(fields.get('city'))]].filter(([,value])=>value);
+      const extra = [['Возраст',asText(fields.get('age'))],['Город',asText(fields.get('city'))],
+        ['Место работы',asText(fields.get('workplace'))]].filter(([,value])=>value);
       const contact = {name,phone:asText(fields.get('phone')),job:asText(fields.get('job')),date:'',sourceId:'',adId:'',extra};
       const {added} = await persistCandidates({contacts:[contact],file:'Ручное добавление',source:'manual'});
       await refreshAfterWrite();
@@ -1626,13 +1640,23 @@ function deleteLead(id) {
   };
 }
 const maxTransferBatch = 5000;
+const transferIncrements = [10,20,30];
 function updateTransferControls() {
-  const count = transfer.ids.size;
+  const {ids,contacts} = transfer;
+  const stage = stageById[$('#transfer-stage').value];
+  const selected = contacts.filter(contact=>ids.has(contact.id)).length;
   const selectAll = $('#transfer-all');
-  selectAll.disabled = !state.contacts.length;
-  selectAll.textContent = count && count === state.contacts.length ? 'Снять выбор со всех' : 'Передать всех лидов';
-  $('#transfer-count').textContent = 'Выбрано '+formatCount(count);
-  $('#team-assign-submit').disabled = !count || !$('#team-assignee').value;
+  $('#transfer-bulk').hidden = !stage;
+  if(stage) {
+    const full = contacts.length > 0 && selected === contacts.length;
+    selectAll.disabled = !contacts.length;
+    selectAll.textContent = (full ? 'Снять выбор' : 'Выбрать всех') + ' · ' + stage.name;
+    for(const button of all('[data-transfer-add]')) button.disabled = selected === contacts.length;
+    $('#transfer-quantity').disabled = $('#transfer-set').disabled = !contacts.length;
+    $('#transfer-stage-count').textContent = 'На этапе выбрано '+formatCount(selected)+' из '+formatCount(contacts.length);
+  }
+  $('#transfer-count').textContent = 'Всего выбрано '+formatCount(ids.size);
+  $('#team-assign-submit').disabled = !ids.size || !$('#team-assignee').value;
 }
 function syncTransferDialog() {
   if(!transfer || !dialog.open || transfer.sending) return;
@@ -1647,6 +1671,7 @@ function syncTransferDialog() {
   recipient.disabled = !members.length;
   const stage = $('#transfer-stage').value;
   const contacts = state.contacts.filter(contact=>!stage || contact.status===stage);
+  transfer.contacts = contacts;
   const list = $('#transfer-list');
   const focusId = list.contains(document.activeElement) ? document.activeElement.value : null;
   const scroll = list.scrollTop;
@@ -1655,8 +1680,9 @@ function syncTransferDialog() {
     const name = labelOf(contact);
     return '<label class="transfer-row"><input type="checkbox" name="transfer-lead" value="'+safe(contact.id)+
       '" aria-label="Выбрать: '+safe(name)+'"'+(transfer.ids.has(contact.id) ? ' checked' : '')+'>'+
-      '<span class="transfer-person"><strong>'+safe(name)+'</strong>'+
-      (contact.phone ? '<small>'+safe(formatPhone(contact.phone))+'</small>' : '')+'</span>'+
+      '<span class="transfer-person"><strong class="transfer-name">'+safe(name)+'</strong>'+
+      '<span class="transfer-phone">'+safe(formatPhone(contact.phone) || 'Без телефона')+'</span>'+
+      candidateWork(contact)+candidateLocationAge(contact)+'</span>'+
       '<span class="tag '+status.color+'">'+status.name+'</span></label>';
   }).join('') || '<p class="transfer-empty">'+(state.contacts.length ? 'На этом этапе кандидатов нет.' : 'У вас пока нет кандидатов.')+'</p>';
   if(focusId) {
@@ -1669,29 +1695,70 @@ function openTransferDialog() {
   const stagesHTML = allStages.map(stage=>'<option value="'+stage.id+'">'+stage.name+'</option>').join('');
   showDialog('Передать лиды','Выберите кандидатов и получателя.',
     '<fieldset class="transfer-fields" id="transfer-fields"><div class="transfer-filters">'+
-    '<label class="field">Этап<select id="transfer-stage"><option value="">Все этапы</option>'+stagesHTML+'</select></label>'+
+    '<label class="field">Этап<select id="transfer-stage">'+stagesHTML+'<option value="">Все этапы</option></select></label>'+
     '<label class="field">Кому передать<select id="team-assignee"></select></label></div>'+
-    '<button class="button transfer-all" id="transfer-all" type="button">Передать всех лидов</button>'+
+    '<div class="transfer-bulk" id="transfer-bulk"><div class="transfer-picks">'+
+    '<button class="button" id="transfer-all" type="button" aria-controls="transfer-list"></button>'+
+    transferIncrements.map(count=>'<button class="button" type="button" data-transfer-add="'+count+
+      '" aria-label="Добавить '+count+' лидов" aria-controls="transfer-list">+'+count+'</button>').join('')+'</div>'+
+    '<div class="transfer-exact"><label class="field">Точное количество<input id="transfer-quantity" type="number" '+
+    'min="0" max="99" step="1" inputmode="numeric" placeholder="0–99" required></label>'+
+    '<button class="button" id="transfer-set" type="button" aria-controls="transfer-list">Установить</button>'+
+    '<span class="transfer-stage-count" id="transfer-stage-count"></span></div></div>'+
     '<div id="transfer-list" class="transfer-list" role="group" aria-label="Кандидаты"></div></fieldset>'+
     '<p class="notice error" id="transfer-error" role="alert" hidden></p>',
     '<span id="transfer-count" class="transfer-count" aria-live="polite"></span>'+
     '<button class="button" type="button" data-close>Отмена</button>'+
     '<button class="button primary" id="team-assign-submit" type="button" disabled>Передать</button>');
   dialog.classList.add('transfer-dialog');
-  const current = {ids:new Set(),sending:false};
+  const current = {ids:new Set(),contacts:[],sending:false};
   transfer = current;
   const stage = $('#transfer-stage');
   const list = $('#transfer-list');
   const fieldset = $('#transfer-fields');
-  stage.onchange = () => { list.scrollTop = 0; syncTransferDialog(); };
-  $('#transfer-all').onclick = () => {
-    if(current.ids.size === state.contacts.length) current.ids.clear();
-    else {
-      current.ids = new Set(state.contacts.map(contact=>contact.id));
-      stage.value = '';
-      list.scrollTop = 0;
-    }
+  const quantity = $('#transfer-quantity');
+  stage.value = state.status || separateViews[state.view]?.id || 'new';
+  stage.onchange = () => {
+    quantity.value = '';
+    list.scrollTop = 0;
     syncTransferDialog();
+  };
+  function syncSelection() {
+    for(const input of list.querySelectorAll('input')) input.checked = current.ids.has(input.value);
+    updateTransferControls();
+  }
+  $('#transfer-all').onclick = () => {
+    const remove = current.contacts.every(contact=>current.ids.has(contact.id));
+    for(const {id} of current.contacts) {
+      if(remove) current.ids.delete(id);
+      else current.ids.add(id);
+    }
+    syncSelection();
+  };
+  for(const button of all('[data-transfer-add]')) {
+    button.onclick = () => {
+      const available = current.contacts.filter(contact=>!current.ids.has(contact.id));
+      for(const {id} of available.slice(0,Number(button.dataset.transferAdd))) current.ids.add(id);
+      syncSelection();
+    };
+  }
+  function setQuantity() {
+    if(!quantity.reportValidity()) return;
+    const selected = [];
+    const available = [];
+    for(const {id} of current.contacts) {
+      if(current.ids.delete(id)) selected.push(id);
+      else available.push(id);
+    }
+    for(const id of [...selected,...available].slice(0,quantity.valueAsNumber)) current.ids.add(id);
+    syncSelection();
+  }
+  $('#transfer-set').onclick = setQuantity;
+  quantity.onkeydown = event => {
+    if(event.key === 'Enter') {
+      event.preventDefault();
+      setQuantity();
+    }
   };
   $('#team-assignee').onchange = updateTransferControls;
   list.onchange = event => {
